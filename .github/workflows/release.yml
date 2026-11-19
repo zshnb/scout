@@ -27,7 +27,7 @@ jobs:
       - run: pnpm check
       - run: pnpm test
       - run: pnpm build
-      - run: tar -czf scout-macos-arm64.tar.gz -C dist scout
+      - run: COPYFILE_DISABLE=1 tar -czf scout-macos-arm64.tar.gz -C dist scout
       - name: Attach executable to release
         env:
           GH_TOKEN: ${{ github.token }}
