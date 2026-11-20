@@ -3,7 +3,7 @@ import { render, Text } from 'ink'
 import { Board } from './Board.tsx'
 import { startDemo } from './demo.ts'
 import { connect, defaultServer, getSession, type Session } from './session.ts'
-import { createTurnNotifier } from './turn-notification.ts'
+import { createGameNotifier } from './game-notification.ts'
 import type { View } from '../protocol.ts'
 
 function App({ session }: { session?: Session }) {
@@ -12,7 +12,7 @@ function App({ session }: { session?: Session }) {
   const [busy, setBusy] = useState(true)
   const live = useRef<ReturnType<typeof connect> | null>(null)
   useEffect(() => {
-    const notify = createTurnNotifier(message => process.stdout.write(message))
+    const notify = createGameNotifier(message => process.stdout.write(message), { local: !session })
     const receive = (v: View) => {
       notify(v)
       setView(v)

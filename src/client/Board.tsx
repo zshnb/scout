@@ -38,13 +38,13 @@ function Cards({ cards, width, range, inserted }: {
         const bar = marked ? (i === range[0] || col === 0 ? '└' : '─') + '─'.repeat(cell - 2) +
           (i === range[1] || col === perRow - 1 ? '┘' : '─') : ' '
         return <Box key={i} width={cell} flexDirection="column">
-          {inserted !== undefined && <Text color={amber}>{inserted === i ? '新 ▼' : ' '}</Text>}
-          <Box borderStyle={compact ? undefined : 'single'} borderColor={marked ? mint : muted}
+          {inserted !== undefined && <Text bold>{inserted === i ? '新 ▼' : ' '}</Text>}
+          <Box borderStyle={compact ? undefined : marked ? 'bold' : 'single'}
             flexDirection="column" alignItems="center" width={cell - 1} aria-label={`当前 ${top}，备用 ${bottom}`}>
-            <Text bold color={marked ? mint : undefined}>{largePoints[top]}</Text>
-            <Box alignSelf="flex-end"><Text dimColor>{bottom}</Text></Box>
+            <Text bold>{largePoints[top]}</Text>
+            <Box alignSelf="flex-end"><Text>{bottom}</Text></Box>
           </Box>
-          {range && <Text color={mint}>{bar}</Text>}
+          {range && <Text>{bar}</Text>}
         </Box>
       })}
     </Box>)

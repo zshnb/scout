@@ -79,7 +79,7 @@ test('40 列终端完整显示 12 张牌、选区和键位；同分并列', asyn
   assert.equal(ui.lastFrame()!.match(/#1 /g)?.length, 2)
 })
 
-test('宽终端的桌面和手牌以三行大字显示当前点数，备用点数靠右', () => {
+test('宽终端的牌面保留三行大字和右下角点数，选中的牌使用粗边框', () => {
   const v = playerView(demoGame(), 1, 'DEMN22', 3)
   v.phase = 'play'
   v.owner = 0
@@ -88,6 +88,8 @@ test('宽终端的桌面和手牌以三行大字显示当前点数，备用点�
   const frame = renderToString(<Board view={v} columns={80} submit={() => {}} />, { columns: 80 })
   assert.ok(frame.includes(['│ █▀█ │', '│ █▀█ │', '│ ▀▀▀ │', '│   10│'].join('\n')))
   assert.ok(frame.includes(['│█ █▀█│', '│█ █ █│', '│▀ ▀▀▀│', '│    8│'].join('\n')))
+  const selected = renderToString(<Board view={{ ...v, phase: 'orient' }} columns={80} submit={() => {}} />, { columns: 80 })
+  assert.ok(selected.includes(['┏━━━━━┓', '┃█ █▀█┃', '┃█ █ █┃', '┃▀ ▀▀▀┃', '┃    8┃', '┗━━━━━┛', '└──────┘'].join('\n')))
 })
 
 test('全屏桌面随窗口高度变化，滚动时保留房间和按键提示', async t => {
