@@ -1,4 +1,4 @@
-import { addPlayer, apply, beats, lobby, playerView, possibleShow, shuffledDeck } from '../game.ts'
+import { acceptsRevision, addPlayer, apply, beats, lobby, playerView, possibleShow, shuffledDeck } from '../game.ts'
 import type { Action, Card, View } from '../protocol.ts'
 
 // The opening uses the four reference screens. Every subsequent turn uses the same rules as online play.
@@ -16,6 +16,7 @@ export function demoGame() {
 }
 export function demoBot(v: View): Action {
   if (v.phase === 'orient') return { type: 'orient', rotate: false }
+  if (v.phase === 'result') return { type: 'next', round: v.round }
   if (v.round === 1) {
     if (v.me === 0 && !v.table.length) {
       const size = v.hand.length === 9 ? 2 : v.hand.length === 7 ? 3 : 0
@@ -33,20 +34,22 @@ export function startDemo(update: (v: View) => void, error: (message: string) =>
   function publish() {
     update(playerView(g, 1, 'DEMN22', revision))
     const bot = g.phase === 'orient' ? g.players.findIndex((p,i) => i !== 1 && !p.ready) :
+      g.phase === 'result' ? g.players.findIndex((_, i) => i !== 1 && !g.result?.confirmed?.includes(i)) :
       g.phase === 'play' && g.turn !== 1 ? g.turn : -1
     if (bot >= 0) timer = setTimeout(() => move(bot, demoBot(playerView(g, bot, 'DEMN22', revision))), 320)
   }
   function move(seat: number, a: Action) {
     clearTimeout(timer)
     try {
-      g = apply(g, seat, a, a.type === 'next' ? shuffledDeck(5, Math.random) : undefined)
-      revision++
+      const next = apply(g, seat, a, a.type === 'next' ? shuffledDeck(5, Math.random) : undefined)
+      if (next !== g) revision++
+      g = next
     } catch (e) { error((e as Error).message) }
     publish()
   }
   publish()
   return { submit: (a: Action, seen: number) => {
-    if (seen !== revision) { error('局面已更新，请重新确认'); return }
-    move(a.type === 'next' ? 0 : 1, a)
+    if (!acceptsRevision(g, a, seen, revision)) { error('局面已更新，请重新确认'); return }
+    move(1, a)
   }, close: () => clearTimeout(timer) }
 }

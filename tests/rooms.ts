@@ -54,6 +54,14 @@ async function match(n: number, idleMs: number) {
     const cards = views.flatMap(v => v.hand).map(([a,b]) => Math.min(a,b)*11 + Math.max(a,b))
     assert.equal(new Set(cards).size, cards.length)
   }
+  async function receiveBroadcast() {
+    views = await Promise.all(clients.map(async c => {
+      const m = await c.next()
+      assert.equal(m.type, 'view', m.type === 'error' ? m.message : undefined)
+      return m.view
+    }))
+    common()
+  }
   async function send(i: number, action: Action, drop = false) {
     const { revision } = views[i]
     const msg = JSON.stringify({ revision, action })
@@ -70,15 +78,49 @@ async function match(n: number, idleMs: number) {
       assert.equal(duplicate.type, 'error')
       assert.deepEqual(duplicate.view, restored)
       reconnected = true
+      common()
     } else {
-      views = await Promise.all(clients.map(async c => {
-        const m = await c.next()
-        assert.equal(m.type, 'view', m.type === 'error' ? m.message : undefined)
-        return m.view
-      }))
+      await receiveBroadcast()
     }
     assert.equal(views[0].revision, revision + 1)
-    common()
+  }
+  async function confirmSettlement(v: View) {
+    const action = { type: 'next', round: v.round } as const
+    assert.deepEqual(v.result?.confirmed, [])
+    if (v.round > 1) {
+      clients[0].ws.send(JSON.stringify({ revision: v.revision, action: { ...action, round: v.round - 1 } }))
+      const stale = await clients[0].next()
+      assert.equal(stale.type, 'error')
+      assert.deepEqual(stale.view, views[0])
+    }
+
+    await send(0, action)
+    assert.equal(views[0].phase, 'result')
+    assert.deepEqual(views[0].result?.confirmed, [0])
+    const disconnected = once(clients[0].ws, 'close')
+    clients[0].ws.close()
+    await disconnected
+    clients[0] = await open(seats[0])
+    assert.deepEqual((await clients[0].next()).view, views[0])
+
+    // All clients can act on the original revision of this settlement.
+    const confirm = JSON.stringify({ revision: v.revision, action })
+    clients[0].ws.send(confirm)
+    const duplicate = await clients[0].next()
+    assert.equal(duplicate.type, 'view')
+    assert.deepEqual(duplicate.view, views[0])
+    for (const client of clients.slice(1)) client.ws.send(confirm)
+    for (let count = 2; count <= n; count++) {
+      await receiveBroadcast()
+      assert.equal(views[0].revision, v.revision + count)
+      if (count < n) {
+        assert.equal(views[0].phase, 'result')
+        assert.equal(new Set(views[0].result?.confirmed).size, count)
+      }
+    }
+    assert.equal(views[0].phase, 'orient')
+    assert.equal(views[0].round, v.round + 1)
+    assert.equal(views[0].result, null)
   }
   try {
     common()
@@ -121,7 +163,7 @@ async function match(n: number, idleMs: number) {
           console.log(n + ' 人局完成 · ' + v.round + ' 轮 · revision ' + v.revision + ' · 得分 ' + totals.join(' / '))
           return
         }
-        await send(0, { type:'next' }); continue
+        await confirmSettlement(v); continue
       }
       const show = possibleShow(v.hand, v.table)
       const pick = { end:'right' as const, flip:true, at:v.hand.length }

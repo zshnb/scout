@@ -94,9 +94,11 @@ function Screen({ view: v, submit, busy, notice, local, width, height }: Props &
   const [rotate, setRotate] = useState(false)
   const me = v.players[v.me]
   const myTurn = v.phase === 'play' && v.turn === v.me
-  const canDeal = local || v.me === 0
-  const canScout = myTurn && v.table.length > 0 && (v.players.length > 2 || me.chips > 0)
-  const canCombo = canScout && v.players.length > 2 && !me.comboUsed
+  const canStart = local || v.me === 0
+  const confirmed = v.result?.confirmed
+  const threeOrMorePlayers = v.players.length > 2
+  const canScout = myTurn && v.table.length > 0 && (threeOrMorePlayers || me.chips > 0)
+  const canCombo = canScout && threeOrMorePlayers && !me.comboUsed
   const picking = mode === 'scout' || mode === 'combo'
   const preview = picking ? previewPick(v.hand, v.table, pick) : null
   const hand = preview?.hand ?? (rotate ? rotateHand(v.hand) : v.hand)
@@ -109,8 +111,12 @@ function Screen({ view: v, submit, busy, notice, local, width, height }: Props &
   useInput((input, key) => {
     if (busy) return
     const k = input.toLowerCase()
-    if (v.phase === 'lobby' && canDeal && key.return && v.players.length >= 2) return send({ type: 'start' })
-    if (v.phase === 'result' && canDeal && key.return) return send({ type: 'next' })
+    if (v.phase === 'lobby' && canStart && key.return && v.players.length >= 2) return send({ type: 'start' })
+    if (v.phase === 'result' && key.return) {
+      if (confirmed && !confirmed.includes(v.me)) send({ type: 'next', round: v.round })
+      if (!confirmed && canStart) send({ type: 'next' })
+      return
+    }
     if (v.phase === 'orient' && !me.ready) {
       if (k === 'r') setRotate(!rotate)
       if (key.return) send({ type: 'orient', rotate })
@@ -159,21 +165,14 @@ function Screen({ view: v, submit, busy, notice, local, width, height }: Props &
     }
   })
 
-  const sidebar = width >= 92 && v.phase === 'play' && mode === 'idle'
-  const cardWidth = width - (sidebar ? 25 : 0)
   const playerName = (i: number) => i === v.me ? '你' : v.players[i].name
-  const roster = <Box flexDirection="column" width={sidebar ? 24 : undefined}>
-    <Text bold color={amber}>玩家 / 手牌</Text>
-    {v.players.map((p, i) => <Text key={i} color={i === v.turn ? amber : undefined}>
-      {i === v.turn ? '▶' : ' '} {playerName(i)}  {p.count} 张</Text>)}
-  </Box>
   let hint = ''
   let content: React.ReactNode
   if (v.phase === 'lobby') {
     content = <Box flexDirection="column"><Text bold>等待入座 · {v.players.length}/5</Text>
       {v.players.map((p, i) => <Text key={i}>{p.name}{i === 0 ? ' · 房主' : ''}{i === v.me ? '（你）' : ''}</Text>)}
     </Box>
-    hint = canDeal && v.players.length >= 2 ? '[Enter] 开始发牌' : '将房间码发给朋友，等待房主发牌'
+    hint = canStart && v.players.length >= 2 ? '[Enter] 开始发牌' : '将房间码发给朋友，等待房主发牌'
   } else if (v.phase === 'orient') {
     content = <Box flexDirection="column" gap={1}>
       <Text bold>{me.ready ? '手牌方向已锁定' : '选择手牌方向'}</Text>
@@ -184,10 +183,12 @@ function Screen({ view: v, submit, busy, notice, local, width, height }: Props &
     hint = me.ready ? '等待其他玩家确认方向' : '[R] 旋转整手   [Enter] 确认方向'
   } else if (v.result) {
     const final = v.phase === 'finished'
+    const waiting = v.players.flatMap((_, i) => confirmed?.includes(i) ? [] : [playerName(i)])
     const ranked = v.players.map((p, i) => ({ ...p, i })).sort((a, b) => b.total - a.total)
     const winners = ranked.filter(p => p.total === ranked[0].total).map(p => playerName(p.i))
     content = <Box flexDirection="column">
       <Text color={mint} bold>{final ? '最终排名 · ' + winners.join('、') + (winners.length > 1 ? ' 共享胜利' : ' 获胜') : '本轮结算'}</Text>
+      {!final && confirmed && <Text bold>待确认 · {waiting.join('、')}</Text>}
       <Text>{playerName(v.result.winner)} · {{ empty: '出光手牌', unchallenged: '其余玩家均只 Scout', blocked: '对手无合法行动' }[v.result.reason]}</Text>
       {ranked.map((p, j) => {
         const score = v.result!.scores[p.i]
@@ -195,11 +196,39 @@ function Screen({ view: v, submit, busy, notice, local, width, height }: Props &
         return <Text key={p.i}>{final ? '#' + place + ' ' : ''}{playerName(p.i)}　得分牌 {score.captured} + 筹码 {score.chips} − 扣牌 {score.penalty} = {score.points}　累计 {ranked[j].total}</Text>
       })}
     </Box>
-    hint = final ? '[Ctrl+C] 离开' : canDeal ? '[Enter] 开始下一轮' : '等待房主开始下一轮'
+    if (final) hint = '[Ctrl+C] 离开'
+    else if (confirmed) hint = confirmed.includes(v.me) ? '已确认，等待其他玩家' : '[Enter] 确认结算'
+    else hint = canStart ? '[Enter] 开始下一轮' : '等待房主开始下一轮'
   } else {
     const handRange: [number, number] | undefined = inRange ? [from, to] : undefined
+    const chipColumnWidth = threeOrMorePlayers ? 5 : 0
+    const sidebarWidth = 34 + chipColumnWidth
+    const sidebar = width - sidebarWidth >= 58 && mode === 'idle'
+    const rosterWidth = sidebar ? sidebarWidth : Math.min(width, sidebarWidth + 10)
+    const cardWidth = sidebar ? width - rosterWidth - 1 : width
+    const comboColumn = rosterWidth - chipColumnWidth >= 30 ? 'Scout & Show' : 'S&S'
+    const rosterRows = [
+      { name: '玩家', count: '手牌', captured: '已赢', chips: '筹码', combo: comboColumn, active: false },
+      ...v.players.map((p, i) => ({
+        name: playerName(i), count: p.count, captured: p.captured, chips: p.chips, active: i === v.turn,
+        combo: threeOrMorePlayers ? (p.comboUsed ? '已用' : '可用') : '不适用',
+      })),
+    ]
+    const roster = <Box width={rosterWidth} flexDirection="column">
+      {rosterRows.map(({ name, count, captured, chips, combo, active }, i) => (
+        <Box key={i}>
+          <Box flexGrow={1} flexBasis={0} minWidth={0} paddingRight={1}>
+            <Text bold={i === 0 || active} wrap="truncate-end">{active ? '▶ ' : '  '}{name}</Text>
+          </Box>
+          <Box width={5}><Text bold={i === 0}>{count}</Text></Box>
+          <Box width={5}><Text bold={i === 0}>{captured}</Text></Box>
+          {threeOrMorePlayers && <Box width={chipColumnWidth}><Text bold={i === 0}>{chips}</Text></Box>}
+          <Box width={Math.max(6, comboColumn.length)}><Text bold={i === 0}>{combo}</Text></Box>
+        </Box>
+      ))}
+    </Box>
     content = <Box flexDirection="column">
-      <Box>
+      <Box gap={sidebar ? 1 : 0}>
         <Box flexDirection="column" width={cardWidth}>
           <Text bold color={amber}>{picking ? (mode === 'combo' ? 'Scout & Show' : 'Scout') + ' · 预览' : '桌面牌组'}</Text>
           {picking && <Text>取{pick.end === 'left' ? '左' : '右'}端 {v.table[pick.end === 'left' ? 0 : v.table.length - 1][0]} → {hand[pick.at][0]}　插在第 {pick.at + 1} 位</Text>}
@@ -211,7 +240,7 @@ function Screen({ view: v, submit, busy, notice, local, width, height }: Props &
         </Box>
         {sidebar && roster}
       </Box>
-      {!sidebar && mode === 'idle' && <Text dimColor>{v.players.map((p, i) => playerName(i) + ' ' + p.count + '张').join('  ')}</Text>}
+      {!sidebar && roster}
     </Box>
     if (myTurn) {
       if (mode === 'idle') hint = '[S] Show' + (canScout ? '   [C] Scout' : '') + (canCombo ? '   [B] Scout & Show' : '')
@@ -224,7 +253,7 @@ function Screen({ view: v, submit, busy, notice, local, width, height }: Props &
     <Box justifyContent="space-between"><Text bold>SCOUT</Text><Text>房间 {v.code}{v.round ? ' · 第 ' + v.round + '/' + v.players.length + ' 轮' : ''}</Text></Box>
     <Text color={muted}>{'─'.repeat(width)}</Text>
     <TableBody width={width}>{content}</TableBody>
-    {v.phase === 'play' && <Text color={amber}>轮到{playerName(v.turn)}行动　<Text dimColor>{v.players.length === 2 ? 'Scout 筹码 ' + me.chips : '本轮 Scout & Show ' + (me.comboUsed ? '已使用' : '可用')}</Text></Text>}
+    {v.phase === 'play' && <Text color={amber}>轮到{playerName(v.turn)}行动{v.players.length === 2 && <Text dimColor>　Scout 筹码 {me.chips}</Text>}</Text>}
     {hint && <Text color={mint}>{hint}</Text>}
     {notice && <Text color={amber}>{notice}</Text>}
   </Box>

@@ -6,7 +6,7 @@ import { playerView } from '../src/game.ts'
 
 test('只在进入自己回合时通知，同回合抓牌和重连快照不重复提醒', () => {
   const sent: string[] = []
-  const notify = createGameNotifier(message => sent.push(message), { env: { TERM_PROGRAM: 'iTerm.app' } })
+  const notify = createGameNotifier(message => sent.push(message), { env: { TERM_PROGRAM: 'iTerm.app' }, notifySystem: null })
   const v = playerView(demoGame(), 1, 'DEMN22', 1)
   v.players[v.me].name = '小林'
   v.turn = v.me
@@ -30,7 +30,7 @@ test('只在进入自己回合时通知，同回合抓牌和重连快照不重�
 
 test('首轮发牌和最终结算各通知一次，逐轮发牌和结算不重复提醒', () => {
   const sent: string[] = []
-  const notify = createGameNotifier(message => sent.push(message), { env: { TERM_PROGRAM: 'iTerm.app' } })
+  const notify = createGameNotifier(message => sent.push(message), { env: { TERM_PROGRAM: 'iTerm.app' }, notifySystem: null })
   const orient = playerView(demoGame(), 1, 'DEMN22', 1)
   notify({ ...orient, round: 0, phase: 'lobby' })
   notify(orient)
@@ -51,20 +51,20 @@ test('首轮发牌和最终结算各通知一次，逐轮发牌和结算不重�
 test('本地试玩发牌即响铃，恢复座位时不补发已发生的开局或结束通知', () => {
   const sent: string[] = []
   const orient = playerView(demoGame(), 1, 'DEMN22', 1)
-  const local = createGameNotifier(message => sent.push(message), { env: {}, local: true })
+  const local = createGameNotifier(message => sent.push(message), { env: {}, local: true, notifySystem: null })
   local(orient)
   local(orient)
   local({ ...orient, phase: 'finished' })
   assert.deepEqual(sent, ['\x07', '\x07'])
 
-  const resume = () => createGameNotifier(() => assert.fail('恢复座位不应补发通知'), { env: {} })
+  const resume = () => createGameNotifier(() => assert.fail('恢复座位不应补发通知'), { env: {}, notifySystem: null })
   resume()(orient)
   resume()({ ...orient, phase: 'finished' })
 })
 
 test('从大厅重连到自己行动时，开局和换人合并提醒', () => {
   const sent: string[] = []
-  const notify = createGameNotifier(message => sent.push(message), { env: { TERM_PROGRAM: 'iTerm.app' } })
+  const notify = createGameNotifier(message => sent.push(message), { env: { TERM_PROGRAM: 'iTerm.app' }, notifySystem: null })
   const v = playerView(demoGame(), 1, 'DEMN22', 1)
   notify({ ...v, round: 0, phase: 'lobby' })
   notify({ ...v, phase: 'play', turn: v.me })
@@ -82,15 +82,39 @@ test('恢复座位时若已轮到自己立即提醒，未知终端与多路复�
   ]
   for (const env of environments) {
     const sent: string[] = []
-    const notify = createGameNotifier(message => sent.push(message), { env })
+    const notify = createGameNotifier(message => sent.push(message), { env, notifySystem: null })
     notify(v)
     notify(v)
     assert.deepEqual(sent, ['\x07'])
   }
   for (const env of [{ TERM_PROGRAM: 'ghostty' }, { TERM_PROGRAM: 'WezTerm' }, { TERM: 'xterm-kitty' }]) {
     const sent: string[] = []
-    createGameNotifier(message => sent.push(message), { env })(v)
+    createGameNotifier(message => sent.push(message), { env, notifySystem: null })(v)
     assert.equal(sent.length, 1)
     assert.ok(sent[0].startsWith('\x1b]9;SCOUT'))
   }
+})
+
+test('系统通知接收所有游戏事件，发送失败时回退到终端提醒', () => {
+  const system: string[] = [], terminal: string[] = []
+  const notify = createGameNotifier(message => terminal.push(message), {
+    env: { TERM: 'xterm-256color' },
+    local: true,
+    notifySystem: message => system.push(message),
+  })
+  const v = playerView(demoGame(), 1, 'DEMN22', 1)
+  notify(v)
+  notify({ ...v, phase: 'play', turn: v.me })
+  notify({ ...v, phase: 'finished' })
+  assert.deepEqual(system, ['游戏开始', '轮到 你 行动了', '游戏结束，请查看最终排名'])
+  assert.equal(terminal.length, 0)
+
+  const fallback = createGameNotifier(message => terminal.push(message), {
+    env: { TERM: 'xterm-256color' },
+    local: true,
+    notifySystem: (_message, onFailure) => onFailure(),
+  })
+  fallback(v)
+  fallback(v)
+  assert.deepEqual(terminal, ['\x07'])
 })

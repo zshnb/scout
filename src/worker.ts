@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
-import { addPlayer, apply, lobby, playerView, shuffledDeck, type Game } from './game.ts'
+import { acceptsRevision, addPlayer, apply, lobby, playerView, shuffledDeck, type Game } from './game.ts'
 import { codePattern, commandSchema, seatRequest } from './protocol.ts'
 
 interface Env { ROOMS: DurableObjectNamespace<Room> }
@@ -129,12 +129,14 @@ export class Room extends DurableObject<Env> {
     try { decoded = JSON.parse(raw) } catch { return this.send(ws, s, '请求格式无效') }
     const msg = commandSchema.safeParse(decoded)
     if (!msg.success) return this.send(ws, s, '操作格式无效')
-    if (msg.data.revision !== s.revision) return this.send(ws, s, '局面已更新，请重新确认')
-    const { action } = msg.data
+    const { action, revision } = msg.data
+    if (!acceptsRevision(s.game, action, revision, s.revision)) return this.send(ws, s, '局面已更新，请重新确认')
     const n = s.game.players.length
     const fresh = action.type === 'start' || (action.type === 'next' && n !== 2)
     try {
-      s.game = apply(s.game, ws.deserializeAttachment(), action, fresh ? shuffledDeck(n, Math.random) : undefined)
+      const game = apply(s.game, ws.deserializeAttachment(), action, fresh ? shuffledDeck(n, Math.random) : undefined)
+      if (game === s.game) return this.send(ws, s)
+      s.game = game
     } catch (e) { return this.send(ws, s, e instanceof Error ? e.message : '非法操作') }
     s.revision++
     this.save(s)

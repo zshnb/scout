@@ -91,8 +91,12 @@ function finish(g: Game, reason: RoundResult['reason'], winner: number) {
     p.total += points
     return { captured: p.captured.length, chips: p.chips, penalty, points }
   })
-  g.result = { reason, winner, scores }
+  g.result = { reason, winner, scores, confirmed: [] }
   g.phase = g.round === g.players.length ? 'finished' : 'result'
+}
+export function acceptsRevision(game: Game, action: Action, seen: number, current: number) {
+  return seen === current || (seen < current && game.phase === 'result' &&
+    action.type === 'next' && action.round === game.round)
 }
 // The caller supplies a shuffled deck only when a fresh deal is needed.
 export function apply(game: Game, seat: number, action: Action, deck?: Card[]): Game {
@@ -101,8 +105,16 @@ export function apply(game: Game, seat: number, action: Action, deck?: Card[]): 
   if (!p) throw Error('座位不存在')
   const n = g.players.length
   if (action.type === 'start' || action.type === 'next') {
-    if (seat !== 0 || n < 2 || g.phase !== (action.type === 'start' ? 'lobby' : 'result')) {
-      throw Error('请由房主在凑齐人数或轮末时发牌')
+    if (action.type === 'start') {
+      if (seat !== 0 || n < 2 || g.phase !== 'lobby') throw Error('请由房主在凑齐人数后发牌')
+    } else {
+      if (g.phase !== 'result' || !g.result || (action.round !== undefined && action.round !== g.round)) {
+        throw Error('当前轮次无法确认结算')
+      }
+      const confirmed = g.result.confirmed ??= []
+      if (confirmed.includes(seat)) return game
+      confirmed.push(seat)
+      if (confirmed.length < n) return g
     }
     const cards = n === 2 && g.round === 1 ? g.reserve : deck
     const expected = n === 3 ? 36 : n === 5 ? 45 : n === 2 && g.round === 1 ? 22 : 44
@@ -155,8 +167,10 @@ export function apply(game: Game, seat: number, action: Action, deck?: Card[]): 
 }
 
 export function playerView(g: Game, me: number, code: string, revision: number): View {
+  const result = g.phase === 'result' && g.result
+    ? { ...g.result, confirmed: g.result.confirmed ?? [] } : g.result
   return { code, revision, me, phase: g.phase, round: g.round, starter: g.starter,
-    turn: g.turn, table: g.table, owner: g.owner, result: g.result, hand: g.players[me].hand,
+    turn: g.turn, table: g.table, owner: g.owner, result, hand: g.players[me].hand,
     players: g.players.map(({ hand, captured, ...publicInfo }) =>
       ({ ...publicInfo, count: hand.length, captured: captured.length })),
   }

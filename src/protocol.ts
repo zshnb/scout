@@ -15,7 +15,7 @@ export const actionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('show'), ...rangeFields }),
   z.strictObject({ type: z.literal('scout'), ...pickFields }),
   z.strictObject({ type: z.literal('combo'), ...pickFields, ...rangeFields }),
-  z.strictObject({ type: z.literal('next') }),
+  z.strictObject({ type: z.literal('next'), round: index.optional() }),
 ])
 export type Action = z.infer<typeof actionSchema>
 export type Pick = Omit<Extract<Action, { type: 'scout' }>, 'type'>
@@ -28,6 +28,7 @@ export type Card = z.infer<typeof card>
 const result = z.object({
   reason: z.enum(['empty', 'unchallenged', 'blocked']), winner: index,
   scores: z.array(z.object({ captured: index, chips: z.number().int().nonnegative(), penalty: index, points: z.number().int() })),
+  confirmed: z.array(index).max(5).optional(),
 })
 export type RoundResult = z.infer<typeof result>
 const player = z.object({

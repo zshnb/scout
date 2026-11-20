@@ -1,8 +1,22 @@
+import { execFile } from 'node:child_process'
 import type { View } from '../protocol.ts'
+
+type SystemNotifier = (message: string, onFailure: () => void) => void
+
+const notifyMac: SystemNotifier = (message, onFailure) => {
+  execFile('/usr/bin/osascript', [
+    '-e', 'on run argv',
+    '-e', 'display notification (item 1 of argv) with title "SCOUT"',
+    '-e', 'end run',
+    message,
+  ], { timeout: 3000 }, error => { if (error) onFailure() })
+}
 
 export function createGameNotifier(
   write: (message: string) => void,
-  { env = process.env, local = false }: { env?: NodeJS.ProcessEnv, local?: boolean } = {},
+  {
+    env = process.env, local = false, notifySystem = process.platform === 'darwin' ? notifyMac : null,
+  }: { env?: NodeJS.ProcessEnv, local?: boolean, notifySystem?: SystemNotifier | null } = {},
 ) {
   const program = env.TERM_PROGRAM ?? ''
   const term = env.TERM ?? ''
@@ -26,6 +40,10 @@ export function createGameNotifier(
     }
     lastPhase = view.phase
     lastOwnRound = ownRound
-    if (messages.length) write(desktop ? `\x1b]9;SCOUT · ${messages.join(' · ')}\x1b\\` : '\x07')
+    if (!messages.length) return
+    const message = messages.join(' · ')
+    const fallback = () => write(desktop ? `\x1b]9;SCOUT · ${message}\x1b\\` : '\x07')
+    if (notifySystem) notifySystem(message, fallback)
+    else fallback()
   }
 }

@@ -57,7 +57,9 @@ test('真实 Ink 按键走过四张设计稿，取消预览与回车提交', asy
   ui.rerender(board(view())); await sleep(50)
   assert.match(frame(), /轮到小林行动/)
   assert.match(frame(), /我的手牌 · 5 张/)
-  assert.match(frame(), /本轮 Scout & Show 已使用/)
+  assert.match(frame(), /阿青 +4 +0 +1 +可用/)
+  assert.match(frame(), /你 +5 +4 +3 +已用/)
+  assert.match(frame(), /小林 +10 +0 +0 +可用/)
 })
 test('40 列终端完整显示 12 张牌、选区和键位；同分并列', async t => {
   const v = playerView(demoGame(), 1, 'DEMN22', 3)
@@ -90,6 +92,68 @@ test('宽终端的牌面保留三行大字和右下角点数，选中的牌使�
   assert.ok(frame.includes(['│█ █▀█│', '│█ █ █│', '│▀ ▀▀▀│', '│    8│'].join('\n')))
   const selected = renderToString(<Board view={{ ...v, phase: 'orient' }} columns={80} submit={() => {}} />, { columns: 80 })
   assert.ok(selected.includes(['┏━━━━━┓', '┃█ █▀█┃', '┃█ █ █┃', '┃▀ ▀▀▀┃', '┃    8┃', '┗━━━━━┛', '└──────┘'].join('\n')))
+})
+
+test('宽窄终端都显示每位玩家的手牌、已赢牌、筹码和本轮 Scout & Show 状态', () => {
+  const v = playerView(demoGame(), 1, 'DEMN22', 3)
+  v.phase = 'play'
+  v.players[0].name = '一二三四五六七八九十二三四五六七'
+  v.players[0].captured = 10
+  v.players[0].chips = 12
+  v.players[0].comboUsed = true
+  v.players[1].chips = 3
+  function draw(view: View, columns: number) {
+    return renderToString(<Board view={view} columns={columns} rows={36} submit={() => {}} />, { columns })
+  }
+  for (const columns of [40, 100]) {
+    const frame = draw(v, columns)
+    assert.match(frame, /玩家 +手牌 +已赢 +筹码 +Scout & Show/)
+    assert.match(frame, /▶ 一二[^\n]* +9 +10 +12 +已用/)
+    assert.match(frame, /你 +9 +0 +3 +可用/)
+    for (const player of ['小林', '小麦', '阿森']) {
+      assert.match(frame, new RegExp(player + ' +9 +0 +0 +可用'))
+    }
+    assert.ok(frame.split('\n').every(line => stringWidth(line) <= columns))
+  }
+  const duel = draw({ ...v, players: v.players.slice(0, 2) }, 40)
+  assert.match(duel, /玩家 +手牌 +已赢 +Scout & Show/)
+  assert.match(duel, /▶ 一二[^\n]* +9 +10 +不适用/)
+  assert.match(duel, /你 +9 +0 +不适用/)
+  assert.match(duel, /Scout 筹码 3/)
+})
+
+test('轮末支持全员确认，也能和旧版房间继续对局', { timeout: 2000 }, async t => {
+  const v = playerView(demoGame(), 1, 'DEMN22', 3)
+  v.phase = 'result'
+  v.result = {
+    reason: 'empty', winner: 0, confirmed: [0, 2],
+    scores: v.players.map(() => ({ captured: 0, chips: 0, penalty: 0, points: 0 })),
+  }
+  let submit!: (action: Action, revision: number) => void
+  const submitted = new Promise<[Action, number]>(resolve => { submit = (...move) => resolve(move) })
+  const draw = (view: View) => <Board view={view} columns={64} rows={24} submit={submit} />
+  const ui = render(draw(v))
+  t.after(() => { ui.unmount(); ui.cleanup() })
+  await sleep(50)
+  assert.match(ui.lastFrame()!, /待确认 · 你、小麦、阿森/)
+  assert.match(ui.lastFrame()!, /\[Enter\] 确认结算/)
+  ui.stdin.write('\r')
+  assert.deepEqual(await submitted, [{ type: 'next', round: v.round }, v.revision])
+
+  const waiting = renderToString(draw({ ...v, result: { ...v.result, confirmed: [0, 1, 2] } }), { columns: 64 })
+  assert.match(waiting, /待确认 · 小麦、阿森/)
+  assert.match(waiting, /已确认，等待其他玩家/)
+  const final = renderToString(draw({ ...v, phase: 'finished' }), { columns: 64 })
+  assert.doesNotMatch(final, /待确认|确认结算/)
+
+  const legacy = { ...v, result: { ...v.result, confirmed: undefined } }
+  assert.match(renderToString(draw(legacy), { columns: 64 }), /等待房主开始下一轮/)
+  const advanced = new Promise<[Action, number]>(resolve => { submit = (...move) => resolve(move) })
+  ui.rerender(draw({ ...legacy, me: 0 }))
+  await sleep(50)
+  assert.match(ui.lastFrame()!, /\[Enter\] 开始下一轮/)
+  ui.stdin.write('\r')
+  assert.deepEqual(await advanced, [{ type: 'next' }, v.revision])
 })
 
 test('全屏桌面随窗口高度变化，滚动时保留房间和按键提示', async t => {

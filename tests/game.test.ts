@@ -37,9 +37,20 @@ test('发牌、锁定方向与双人预留牌', () => {
     assert.throws(() => apply(turned, 0, { type: 'show', from: 0, to: 0 }))
     if (n === 2) {
       assert.deepEqual(g.reserve, deck.slice(22))
-      const next = apply({ ...g, phase: 'result' }, 0, { type: 'next' })
+      const play = apply(apply(g, 0, { type: 'orient', rotate: false }), 1, { type: 'orient', rotate: false })
+      play.players[0].hand = cards(9)
+      const result = apply(play, 0, { type: 'show', from: 0, to: 0 })
+      delete result.result!.confirmed // Stored settlements from before confirmation support.
+      assert.deepEqual(playerView(result, 0, 'ABC234', 1).result?.confirmed, [])
+      const waiting = apply(result, 0, { type: 'next' })
+      assert.equal(waiting.phase, 'result')
+      assert.deepEqual(waiting.result?.confirmed, [0])
+      assert.equal(apply(waiting, 0, { type: 'next', round: 1 }), waiting)
+      assert.throws(() => apply(waiting, 1, { type: 'next', round: 2 }))
+      const next = apply(waiting, 1, { type: 'next', round: 1 })
       assert.deepEqual(next.players.flatMap(p => p.hand), g.reserve)
       assert.equal(next.starter, 1)
+      assert.equal(next.result, null)
       assert.ok(next.players.every(p => p.chips === 3))
     }
   }
@@ -122,10 +133,21 @@ test('160 场可复现的完整对局逐步检查每张牌和累计得分', () =
       if (g.result) {
         totals = totals.map((x,i) => x + g.result!.scores[i].points)
         assert.deepEqual(g.players.map(p => p.total), totals)
-        if (g.phase === 'finished') break
+        if (g.phase === 'finished') {
+          assert.throws(() => apply(g, 0, { type: 'next', round: g.round }))
+          break
+        }
         const next = shuffledDeck(n, rand)
         expected = (n === 2 ? g.reserve : next).map(key).sort()
-        g = apply(g, 0, { type: 'next' }, next)
+        const round = g.round
+        const action = { type: 'next', round } as const
+        for (let i = 0; i < n - 1; i++) {
+          g = apply(g, i, action)
+          assert.equal(g.phase, 'result')
+          assert.equal(g.round, round)
+          assert.deepEqual(g.players.map(p => p.total), totals)
+        }
+        g = apply(g, n - 1, action, next)
       } else if (g.phase === 'orient') {
         for (let i = 0; i < n; i++) g = apply(g, i, { type: 'orient', rotate: rand() < .5 })
         assert.equal(g.turn, g.round - 1)
